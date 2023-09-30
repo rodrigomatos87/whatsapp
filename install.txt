@@ -1,0 +1,30 @@
+criar /etc/systemd/system/ravi-go.service
+
+conteudo: >>>
+
+[Unit]
+Description=ravi-go
+After=network.target
+
+[Service]
+WorkingDirectory=/var/www/html/go
+ExecStart=/var/www/html/go/go3
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target
+
+<<<
+
+//atualizar o systemctl depois de alterar
+sudo systemctl daemon-reload
+sudo systemctl restart go-ravi
+
+
+//comandos
+
+systemctl start ravi-go
+systemctl stop ravi-go
+systemctl restart ravi-go
+systemctl status ravi-go

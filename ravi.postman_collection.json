@@ -1,0 +1,159 @@
+{
+	"info": {
+		"_postman_id": "db84af88-07a1-49d9-930c-291f6d7de1a4",
+		"name": "ravi",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "4592460"
+	},
+	"item": [
+		{
+			"name": "enviar mensagem",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{address}}:{{port}}/whatsapp/send?jid=554788749284&text=teste 2?",
+					"host": [
+						"{{address}}"
+					],
+					"port": "{{port}}",
+					"path": [
+						"whatsapp",
+						"send"
+					],
+					"query": [
+						{
+							"key": "jid",
+							"value": "554788749284"
+						},
+						{
+							"key": "text",
+							"value": "teste 2?"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "status da conexao",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{address}}:{{port}}/whatsapp/check-status",
+					"host": [
+						"{{address}}"
+					],
+					"port": "{{port}}",
+					"path": [
+						"whatsapp",
+						"check-status"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "info do dispositivo",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{address}}:{{port}}/whatsapp/info",
+					"host": [
+						"{{address}}"
+					],
+					"port": "{{port}}",
+					"path": [
+						"whatsapp",
+						"info"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "dados do grupo pelo link",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{address}}:{{port}}/whatsapp/queryInviteLink?link=https://chat.whatsapp.com/HvK47Nu1P8zKP9Z8XfdRQE",
+					"host": [
+						"{{address}}"
+					],
+					"port": "{{port}}",
+					"path": [
+						"whatsapp",
+						"queryInviteLink"
+					],
+					"query": [
+						{
+							"key": "link",
+							"value": "https://chat.whatsapp.com/HvK47Nu1P8zKP9Z8XfdRQE"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "logout",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{address}}:{{port}}/whatsapp/logout",
+					"host": [
+						"{{address}}"
+					],
+					"port": "{{port}}",
+					"path": [
+						"whatsapp",
+						"logout"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "qrcode",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{address}}:{{port}}/whatsapp/getQRCode",
+					"host": [
+						"{{address}}"
+					],
+					"port": "{{port}}",
+					"path": [
+						"whatsapp",
+						"getQRCode"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "contacts",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{address}}:{{port}}/whatsapp/contacts",
+					"host": [
+						"{{address}}"
+					],
+					"port": "{{port}}",
+					"path": [
+						"whatsapp",
+						"contacts"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
