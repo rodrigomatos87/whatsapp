@@ -9,6 +9,8 @@ make prod
 mv -f /tmp/ravi-go/ravi-go /var/www/html/go/server
 chmod +x /var/www/html/go/server
 
+rm -fr /tmp/ravi-go
+
 echo '[Unit]
 Description=ravi-go
 After=network.target
