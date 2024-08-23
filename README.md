@@ -6,6 +6,11 @@ git clone https://github.com/rodrigomatos87/whatsapp.git
 cd whatsapp
 make prod
 
+# Atualizando a biblioteca
+apt install golang # Caso ainda não esteja instalado
+go get -u go.mau.fi/whatsmeow
+make prod
+
 mv -f /tmp/ravi-go/ravi-go /var/www/html/go/server
 chmod +x /var/www/html/go/server
 
