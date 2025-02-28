@@ -6,6 +6,19 @@ git clone https://github.com/rodrigomatos87/whatsapp.git
 cd whatsapp
 make prod
 
+
+# Se precisasr atualizar o go antes de atualizar a biblioteca
+apt-get remove golang -y
+wget https://go.dev/dl/go1.23.0.linux-amd64.tar.gz
+tar -C /usr/local -xzf go1.23.0.linux-amd64.tar.gz
+
+echo "
+export GOROOT=/usr/local/go
+export GOPATH=\$HOME/go
+export PATH=\$GOPATH/bin:\$GOROOT/bin:\$PATH" >> /root/.profile
+source /root/.profile
+
+
 # Atualizando a biblioteca
 apt install golang # Caso ainda não esteja instalado
 go get -u go.mau.fi/whatsmeow
