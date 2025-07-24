@@ -18,7 +18,7 @@ type qrResp struct {
 }
 
 func (r *repository) getDevice() (*store.Device, error) {
-	return r._storage.GetFirstDevice()
+	return r._storage.GetFirstDevice(context.Background())
 
 }
 
@@ -103,7 +103,7 @@ func (r *repository) RequestNewQRCode(ctx context.Context) (string, error) {
 
 	conn, err := r.conn.Client()
 	if err == nil {
-		err = conn.Logout()
+		err = conn.Logout(context.Background())
 		if err != nil {
 			log.Errorf("erro ao desconectar, %s", err.Error())
 		}
@@ -121,7 +121,7 @@ func (r *repository) RequestNewQRCode(ctx context.Context) (string, error) {
 
 	err = cli.Connect()
 	if err != nil {
-		go cli.Logout()
+		go cli.Logout(context.Background())
 		return "", err
 	}
 

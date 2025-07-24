@@ -79,7 +79,7 @@ func New(logLevel, dbDialect, dbAddress string, requestFullSync bool) (whatsappa
 		store.DeviceProps.RequireFullSync = proto.Bool(true)
 	}
 	dbLog := waLog.Stdout("Database", logLevel, true)
-	storeContainer, err := sqlstore.New(dbDialect, dbAddress, dbLog)
+	storeContainer, err := sqlstore.New(context.Background(), dbDialect, dbAddress, dbLog)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %v", err)
 	}

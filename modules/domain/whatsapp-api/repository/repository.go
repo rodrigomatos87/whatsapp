@@ -46,7 +46,7 @@ func (r *repository) GetContacts(ctx context.Context) (map[types.JID]types.Conta
 		return nil, err
 	}
 
-	return conn.Store.Contacts.GetAllContacts()
+	return conn.Store.Contacts.GetAllContacts(context.Background())
 }
 
 func (r *repository) Logout(ctx context.Context) (err error) {
@@ -55,9 +55,9 @@ func (r *repository) Logout(ctx context.Context) (err error) {
 		return err
 	}
 
-	conn.Logout()
+	conn.Logout(context.Background())
 	conn.Disconnect()
-	conn.Store.Delete()
+	conn.Store.Delete(context.Background())
 
 	r.conn.SetClient(nil)
 	r.conn.SetQrCode("")
