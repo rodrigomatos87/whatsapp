@@ -63,3 +63,11 @@ func (u *useCase) GetContacts(ctx context.Context) (map[types.JID]types.ContactI
 func (u *useCase) GetGroups(ctx context.Context) ([]*types.GroupInfo, error) {
 	return u.repo.GetGroups(ctx)
 }
+
+func (u *useCase) CheckNumber(ctx context.Context, phone string) (models.NumberCheck, error) {
+	if err := u.validators.String(phone, "phone"); err != nil {
+		return models.NumberCheck{}, err
+	}
+
+	return u.repo.CheckNumber(ctx, phone)
+}

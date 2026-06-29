@@ -16,4 +16,5 @@ type Repository interface {
 	GetContacts(ctx context.Context) (map[types.JID]types.ContactInfo, error)
 	GetGroups(ctx context.Context) ([]*types.GroupInfo, error)
 	RequestNewQRCode(ctx context.Context) (string, error)
+	CheckNumber(ctx context.Context, phone string) (models.NumberCheck, error)
 }

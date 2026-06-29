@@ -28,6 +28,30 @@ func New(http httpserver.Server, u whatsappapi.UseCase) {
 	http.Echo().GET("/info", handler.deviceInfo)
 	http.Echo().GET("/getQRCode", handler.QrCode)
 	http.Echo().GET("/contacts", handler.contacts)
+	http.Echo().GET("/check-number/:phone", handler.checkNumber)
+}
+
+func (h handler) checkNumber(c echo.Context) error {
+	ctx := c.Request().Context()
+	// Número vem no path (não na query): o proxy nginx do /whatsapp usa
+	// proxy_pass com variável e não repassa a query string.
+	phone := c.Param("phone")
+	if phone != "" && phone[0] != '+' {
+		phone = "+" + phone
+	}
+
+	res, err := h.useCase.CheckNumber(ctx, phone)
+	if err != nil {
+		return h.InternalErr(c, err)
+	}
+
+	response := map[string]interface{}{
+		"onWhatsApp": res.OnWhatsApp,
+		"jid":        res.JID,
+		"query":      res.Query,
+	}
+
+	return h.Response(c, "verificação de número", response)
 }
 
 func (h handler) sendForm(c echo.Context) error {

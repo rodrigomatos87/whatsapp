@@ -16,4 +16,5 @@ type UseCase interface {
 	QrCode(context.Context) (string, error)
 	GetContacts(ctx context.Context) (map[types.JID]types.ContactInfo, error)
 	GetGroups(ctx context.Context) ([]*types.GroupInfo, error)
+	CheckNumber(ctx context.Context, phone string) (models.NumberCheck, error)
 }

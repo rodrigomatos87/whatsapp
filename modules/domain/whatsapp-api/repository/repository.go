@@ -97,6 +97,41 @@ func mergeContact(a, b types.ContactInfo) types.ContactInfo {
 	return a
 }
 
+// CheckNumber verifica se um número está no WhatsApp e devolve o JID canônico
+// (já normalizado pelo WhatsApp). phone deve vir em formato internacional com
+// "+" (ex.: +5544999990000).
+func (r *repository) CheckNumber(ctx context.Context, phone string) (models.NumberCheck, error) {
+	status, err := r.Status(ctx)
+	if err != nil {
+		return models.NumberCheck{}, err
+	}
+
+	if err := status.IsOK(); err != nil {
+		return models.NumberCheck{}, err
+	}
+
+	conn, err := r.conn.Client()
+	if err != nil {
+		return models.NumberCheck{}, err
+	}
+
+	resp, err := conn.IsOnWhatsApp(context.Background(), []string{phone})
+	if err != nil {
+		return models.NumberCheck{}, err
+	}
+
+	if len(resp) == 0 {
+		return models.NumberCheck{Query: phone, OnWhatsApp: false}, nil
+	}
+
+	r0 := resp[0]
+	return models.NumberCheck{
+		Query:      r0.Query,
+		JID:        r0.JID.String(),
+		OnWhatsApp: r0.IsIn,
+	}, nil
+}
+
 func (r *repository) Logout(ctx context.Context) (err error) {
 	conn, err := r.conn.Client()
 	if err != nil {
