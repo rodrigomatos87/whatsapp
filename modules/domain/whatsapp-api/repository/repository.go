@@ -46,7 +46,55 @@ func (r *repository) GetContacts(ctx context.Context) (map[types.JID]types.Conta
 		return nil, err
 	}
 
-	return conn.Store.Contacts.GetAllContacts(context.Background())
+	raw, err := conn.Store.Contacts.GetAllContacts(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	// Com o LID addressing do WhatsApp, a maioria dos contatos passou a vir
+	// chaveada por LID (@lid) e sem o número real (só o RedactedPhone, ex.:
+	// "+55∙∙∙∙∙∙∙∙28"). Aqui resolvemos o LID para o número (PN) via o mapa do
+	// store e rechaveamos o contato por @s.whatsapp.net, para a UI exibir o
+	// número de verdade. Quando o mesmo contato aparece como LID e como PN,
+	// os dados são mesclados para não perder nome.
+	out := make(map[types.JID]types.ContactInfo, len(raw))
+	for jid, info := range raw {
+		key := jid
+		if jid.Server == types.HiddenUserServer {
+			if pn, err := conn.Store.LIDs.GetPNForLID(context.Background(), jid); err == nil && pn.User != "" {
+				key = pn
+			}
+		}
+		if existing, ok := out[key]; ok {
+			out[key] = mergeContact(existing, info)
+		} else {
+			out[key] = info
+		}
+	}
+
+	return out, nil
+}
+
+// mergeContact preenche campos vazios de "a" com os de "b" (usado quando o
+// mesmo contato chega chaveado por LID e por número).
+func mergeContact(a, b types.ContactInfo) types.ContactInfo {
+	if a.FirstName == "" {
+		a.FirstName = b.FirstName
+	}
+	if a.FullName == "" {
+		a.FullName = b.FullName
+	}
+	if a.PushName == "" {
+		a.PushName = b.PushName
+	}
+	if a.BusinessName == "" {
+		a.BusinessName = b.BusinessName
+	}
+	if a.RedactedPhone == "" {
+		a.RedactedPhone = b.RedactedPhone
+	}
+	a.Found = a.Found || b.Found
+	return a
 }
 
 func (r *repository) Logout(ctx context.Context) (err error) {
