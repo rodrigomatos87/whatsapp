@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
-	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
@@ -66,19 +65,35 @@ func (r *repository) listenQrcode(cli *whatsmeow.Client, chRet chan<- qrResp) {
 		}
 	} else {
 		go func() {
+			first := true
 			for evt := range ch {
-				if evt.Event == "code" {
-					chRet <- qrResp{
-						qr: evt.Code,
+				switch evt.Event {
+				case "code":
+					// Mantém o QR exibido sempre no código válido atual e,
+					// principalmente, CONTINUA drenando o canal. Se pararmos
+					// de ler, o whatsmeow desconecta o cliente no próximo
+					// refresh (~20s) e o pareamento nunca conclui.
+					r.conn.SetQrCode(evt.Code)
+					if first {
+						chRet <- qrResp{qr: evt.Code}
+						first = false
 					}
-					return
-				} else {
-					chRet <- qrResp{
-						qr:  "",
-						err: fmt.Errorf("%s", evt.Event),
+				case "success":
+					// Pareado: o whatsmeow já gravou o device no store
+					// (Store.ID != nil) e o status passa a "OK" sozinho.
+					r.conn.SetQrCode("")
+				default:
+					// timeout / err-*: a sessão de QR terminou. Zera o código
+					// para que o próximo getQRCode inicie uma sessão nova.
+					r.conn.SetQrCode("")
+					if first {
+						chRet <- qrResp{qr: "", err: fmt.Errorf("%s", evt.Event)}
+						first = false
 					}
 				}
 			}
+			// Canal fechado pelo whatsmeow: garante o QR limpo.
+			r.conn.SetQrCode("")
 		}()
 	}
 }
@@ -101,12 +116,16 @@ func (r *repository) RequestNewQRCode(ctx context.Context) (string, error) {
 
 	defer atomic.StoreUint32(&r.conn._qrCodeLock, 0)
 
-	conn, err := r.conn.Client()
-	if err == nil {
-		err = conn.Logout(context.Background())
-		if err != nil {
-			log.Errorf("erro ao desconectar, %s", err.Error())
-		}
+	// Reverifica sob o lock: outra requisição pode ter populado o QR.
+	if qr := r.conn.getQrCode(); qr != "" {
+		return qr, nil
+	}
+
+	// Encerra a sessão anterior (não pareada) antes de abrir uma nova.
+	// Disconnect (e não Logout) para não apagar credenciais nem poluir o log
+	// com "store doesn't contain a device JID".
+	if conn, err := r.conn.Client(); err == nil {
+		conn.Disconnect()
 	}
 
 	cli, err := r.newConn()
@@ -121,7 +140,7 @@ func (r *repository) RequestNewQRCode(ctx context.Context) (string, error) {
 
 	err = cli.Connect()
 	if err != nil {
-		go cli.Logout(context.Background())
+		go cli.Disconnect()
 		return "", err
 	}
 
@@ -131,13 +150,9 @@ func (r *repository) RequestNewQRCode(ctx context.Context) (string, error) {
 		return "", resp.err
 	}
 
-	go r.clearQr()
+	// O QR em cache é mantido atualizado pela goroutine de listenQrcode
+	// enquanto a sessão durar (sem expiração destrutiva a cada 20s).
 	r.conn.SetQrCode(resp.qr)
 
-	return resp.qr, resp.err
-}
-
-func (r *repository) clearQr() {
-	<-time.After(20 * time.Second)
-	r.conn.SetQrCode("")
+	return resp.qr, nil
 }

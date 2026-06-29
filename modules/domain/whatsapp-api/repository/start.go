@@ -113,7 +113,7 @@ func (r *repository) handler(rawEvt interface{}) {
 		}
 
 		if len(conn.Store.PushName) > 0 && evt.Name == appstate.WAPatchCriticalBlock {
-			err := conn.SendPresence(types.PresenceAvailable)
+			err := conn.SendPresence(context.Background(), types.PresenceAvailable)
 			if err != nil {
 				log.Warnf("Failed to send available presence: %v", err)
 			} else {
@@ -131,7 +131,7 @@ func (r *repository) handler(rawEvt interface{}) {
 		}
 		// Send presence available when connecting and when the pushname is changed.
 		// This makes sure that outgoing messages always have the right pushname.
-		err = conn.SendPresence(types.PresenceAvailable)
+		err = conn.SendPresence(context.Background(), types.PresenceAvailable)
 		if err != nil {
 			log.Warnf("Failed to send available presence: %v", err)
 		} else {

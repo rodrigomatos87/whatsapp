@@ -28,7 +28,7 @@ func (r *repository) GetGroups(ctx context.Context) ([]*types.GroupInfo, error) 
 		return nil, err
 	}
 
-	return conn.GetJoinedGroups()
+	return conn.GetJoinedGroups(context.Background())
 }
 
 func (r *repository) GetContacts(ctx context.Context) (map[types.JID]types.ContactInfo, error) {
@@ -81,7 +81,7 @@ func (r *repository) GroupInfoByLink(ctx context.Context, link string) (*types.G
 		return nil, err
 	}
 
-	resp, err := conn.GetGroupInfoFromLink(link)
+	resp, err := conn.GetGroupInfoFromLink(context.Background(), link)
 	if err != nil {
 		return nil, fmt.Errorf("erro ao resolver o link do convite do grupo: %v", err)
 	}
