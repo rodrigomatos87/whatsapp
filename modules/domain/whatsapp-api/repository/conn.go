@@ -72,9 +72,10 @@ type repository struct {
 	sessoes   map[string]*client
 	pareando  *client
 	principal string
+	ponteURL  string
 }
 
-func New(logLevel, dbDialect, dbAddress string, requestFullSync bool) (whatsappapi.Repository, error) {
+func New(logLevel, dbDialect, dbAddress string, requestFullSync bool, ponteURL string) (whatsappapi.Repository, error) {
 	waBinary.IndentXML = true
 	store.DeviceProps.RequireFullSync = proto.Bool(false)
 	store.DeviceProps.PlatformType = meowWaProto.DeviceProps_FIREFOX.Enum()
@@ -94,6 +95,7 @@ func New(logLevel, dbDialect, dbAddress string, requestFullSync bool) (whatsappa
 		_logLevel: logLevel,
 		_storage:  storeContainer,
 		sessoes:   map[string]*client{},
+		ponteURL:  strings.TrimSpace(ponteURL),
 	}
 
 	// Sobe uma sessão para CADA device pareado no store (multi-conta).
@@ -190,6 +192,10 @@ func (r *repository) handler(cli *whatsmeow.Client, rawEvt interface{}) {
 			r.Logout(context.Background(), cli.Store.ID.User)
 		}
 	case *events.Message:
+		// Ponte do Copiloto: entrega a mensagem recebida ao PHP, que decide
+		// se (e como) o copiloto responde. Nunca bloqueia o event loop.
+		go r.encaminharPonte(cli, evt)
+
 		metaParts := []string{fmt.Sprintf("pushname: %s", evt.Info.PushName), fmt.Sprintf("timestamp: %s", evt.Info.Timestamp)}
 		if evt.Info.Type != "" {
 			metaParts = append(metaParts, fmt.Sprintf("type: %s", evt.Info.Type))

@@ -13,8 +13,9 @@ func New(http httpserver.Server, v models.Validators,
 	dbDialect,
 	dbAddress string,
 	requestFullSync bool,
+	ponteURL string,
 ) error {
-	repo, err := repository.New(logLevel, dbDialect, dbAddress, requestFullSync)
+	repo, err := repository.New(logLevel, dbDialect, dbAddress, requestFullSync, ponteURL)
 	if err != nil {
 		return err
 	}

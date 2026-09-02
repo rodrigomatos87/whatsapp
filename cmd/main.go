@@ -16,6 +16,10 @@ var dbAddress = flag.String("db-address", "file:mdtest.db?_foreign_keys=on", "Da
 var httpPort = flag.String("port", "9050", "Server address port")
 var httpAddress = flag.String("address", "0.0.0.0", "Server address")
 
+// Ponte do Copiloto (Ravi): URL local que recebe as mensagens de conversas
+// diretas para o copiloto do sistema decidir se responde. Vazio = desligado.
+var ponteURL = flag.String("ponte-url", "http://127.0.0.1/ia/whats_ponte.php", "URL local da ponte do copiloto (vazio desliga)")
+
 func main() {
 	flag.Parse()
 
@@ -27,7 +31,7 @@ func main() {
 	httpServer := httpserver.New(*debugLogs)
 
 	validators := validators.New()
-	if err := factory.New(httpServer, validators, logLevel, *dbDialect, *dbAddress, requestFullSync); err != nil {
+	if err := factory.New(httpServer, validators, logLevel, *dbDialect, *dbAddress, requestFullSync, *ponteURL); err != nil {
 		log.Fatal(err)
 	}
 
