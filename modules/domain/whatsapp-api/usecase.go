@@ -7,14 +7,17 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
+// conta = número da conta de WhatsApp (JID.User); vazio = conta principal.
 type UseCase interface {
-	Send(ctx context.Context, jid, text string) (string, error)
-	Status(ctx context.Context) (models.WhatsAppAPIStatus, error)
-	DeviceInfo(ctx context.Context) (*types.JID, error)
-	GroupInfoByLink(ctx context.Context, link string) (*types.GroupInfo, error)
-	Logout(ctx context.Context) error
-	QrCode(context.Context) (string, error)
-	GetContacts(ctx context.Context) (map[types.JID]types.ContactInfo, error)
-	GetGroups(ctx context.Context) ([]*types.GroupInfo, error)
-	CheckNumber(ctx context.Context, phone string) (models.NumberCheck, error)
+	Send(ctx context.Context, conta, jid, text string) (string, error)
+	Status(ctx context.Context, conta string) (models.WhatsAppAPIStatus, error)
+	DeviceInfo(ctx context.Context, conta string) (*types.JID, error)
+	GroupInfoByLink(ctx context.Context, conta, link string) (*types.GroupInfo, error)
+	Logout(ctx context.Context, conta string) error
+	QrCode(ctx context.Context, contaNova bool) (string, error)
+	GetContacts(ctx context.Context, conta string) (map[types.JID]types.ContactInfo, error)
+	GetGroups(ctx context.Context, conta string) ([]*types.GroupInfo, error)
+	CheckNumber(ctx context.Context, conta, phone string) (models.NumberCheck, error)
+	ListarContas(ctx context.Context) ([]models.Conta, bool, error)
+	DefinirPrincipal(ctx context.Context, conta string) error
 }

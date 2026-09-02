@@ -3,18 +3,20 @@ package repository
 import (
 	"context"
 	"fmt"
-	"os"
 	"ravi/models"
 	"strings"
 	"time"
 
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 )
 
-func (r *repository) GetGroups(ctx context.Context) ([]*types.GroupInfo, error) {
-	status, err := r.Status(ctx)
+// clientePronto resolve a conta e garante que ela está autenticada e
+// conectada — o pré-requisito de toda operação de verdade.
+func (r *repository) clientePronto(ctx context.Context, conta string) (*whatsmeow.Client, error) {
+	status, err := r.Status(ctx, conta)
 	if err != nil {
 		return nil, err
 	}
@@ -23,7 +25,16 @@ func (r *repository) GetGroups(ctx context.Context) ([]*types.GroupInfo, error) 
 		return nil, err
 	}
 
-	conn, err := r.conn.Client()
+	sess, err := r.sessao(conta)
+	if err != nil {
+		return nil, err
+	}
+
+	return sess.Client()
+}
+
+func (r *repository) GetGroups(ctx context.Context, conta string) ([]*types.GroupInfo, error) {
+	conn, err := r.clientePronto(ctx, conta)
 	if err != nil {
 		return nil, err
 	}
@@ -31,17 +42,8 @@ func (r *repository) GetGroups(ctx context.Context) ([]*types.GroupInfo, error) 
 	return conn.GetJoinedGroups(context.Background())
 }
 
-func (r *repository) GetContacts(ctx context.Context) (map[types.JID]types.ContactInfo, error) {
-	status, err := r.Status(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := status.IsOK(); err != nil {
-		return nil, err
-	}
-
-	conn, err := r.conn.Client()
+func (r *repository) GetContacts(ctx context.Context, conta string) (map[types.JID]types.ContactInfo, error) {
+	conn, err := r.clientePronto(ctx, conta)
 	if err != nil {
 		return nil, err
 	}
@@ -100,17 +102,8 @@ func mergeContact(a, b types.ContactInfo) types.ContactInfo {
 // CheckNumber verifica se um número está no WhatsApp e devolve o JID canônico
 // (já normalizado pelo WhatsApp). phone deve vir em formato internacional com
 // "+" (ex.: +5544999990000).
-func (r *repository) CheckNumber(ctx context.Context, phone string) (models.NumberCheck, error) {
-	status, err := r.Status(ctx)
-	if err != nil {
-		return models.NumberCheck{}, err
-	}
-
-	if err := status.IsOK(); err != nil {
-		return models.NumberCheck{}, err
-	}
-
-	conn, err := r.conn.Client()
+func (r *repository) CheckNumber(ctx context.Context, conta, phone string) (models.NumberCheck, error) {
+	conn, err := r.clientePronto(ctx, conta)
 	if err != nil {
 		return models.NumberCheck{}, err
 	}
@@ -132,34 +125,50 @@ func (r *repository) CheckNumber(ctx context.Context, phone string) (models.Numb
 	}, nil
 }
 
-func (r *repository) Logout(ctx context.Context) (err error) {
-	conn, err := r.conn.Client()
+// Logout desconecta e APAGA a conta do store. Só a sessão pedida cai; as
+// outras contas seguem no ar (por isso não há mais os.Exit aqui). Se a conta
+// era a principal, a próxima da lista assume.
+func (r *repository) Logout(ctx context.Context, conta string) (err error) {
+	sess, err := r.sessao(conta)
 	if err != nil {
 		return err
+	}
+
+	conn, err := sess.Client()
+	if err != nil {
+		return err
+	}
+
+	numero := ""
+	if conn.Store.ID != nil {
+		numero = conn.Store.ID.User
 	}
 
 	conn.Logout(context.Background())
 	conn.Disconnect()
 	conn.Store.Delete(context.Background())
 
-	r.conn.SetClient(nil)
-	r.conn.SetQrCode("")
+	sess.SetClient(nil)
+	sess.SetQrCode("")
 
-	os.Exit(1)
-	return err
+	r.l.Lock()
+	defer r.l.Unlock()
+	if numero != "" {
+		delete(r.sessoes, numero)
+	}
+	if r.principal == numero {
+		r.principal = ""
+		if nums := r.contasOrdenadas(); len(nums) > 0 {
+			r.principal = nums[0]
+		}
+		r.salvarPrincipal()
+	}
+
+	return nil
 }
 
-func (r *repository) GroupInfoByLink(ctx context.Context, link string) (*types.GroupInfo, error) {
-	status, err := r.Status(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := status.IsOK(); err != nil {
-		return nil, err
-	}
-
-	conn, err := r.conn.Client()
+func (r *repository) GroupInfoByLink(ctx context.Context, conta, link string) (*types.GroupInfo, error) {
+	conn, err := r.clientePronto(ctx, conta)
 	if err != nil {
 		return nil, err
 	}
@@ -172,17 +181,8 @@ func (r *repository) GroupInfoByLink(ctx context.Context, link string) (*types.G
 	return resp, nil
 }
 
-func (r *repository) DeviceInfo(ctx context.Context) (*types.JID, error) {
-	status, err := r.Status(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := status.IsOK(); err != nil {
-		return nil, err
-	}
-
-	conn, err := r.conn.Client()
+func (r *repository) DeviceInfo(ctx context.Context, conta string) (*types.JID, error) {
+	conn, err := r.clientePronto(ctx, conta)
 	if err != nil {
 		return nil, err
 	}
@@ -190,8 +190,18 @@ func (r *repository) DeviceInfo(ctx context.Context) (*types.JID, error) {
 	return conn.Store.ID, nil
 }
 
-func (r *repository) Status(ctx context.Context) (models.WhatsAppAPIStatus, error) {
-	conn, err := r.conn.Client()
+func (r *repository) Status(ctx context.Context, conta string) (models.WhatsAppAPIStatus, error) {
+	sess, err := r.sessao(conta)
+	if err != nil {
+		// Sem nenhuma conta pareada o status legado sempre foi "offline",
+		// nunca erro — o front usa isso para exibir o fluxo de QR.
+		if conta == "" {
+			return models.WhatsAppAPIStatus{}.IsOffline(), nil
+		}
+		return models.WhatsAppAPIStatus{}, err
+	}
+
+	conn, err := sess.Client()
 	if err != nil {
 		return models.WhatsAppAPIStatus{}, err
 	}
@@ -207,13 +217,41 @@ func (r *repository) Status(ctx context.Context) (models.WhatsAppAPIStatus, erro
 	return models.WhatsAppAPIStatus{}.IsOffline(), nil
 }
 
-func (r *repository) Send(ctx context.Context, jid1, text string) (string, error) {
-	status, err := r.Status(ctx)
-	if err != nil {
-		return "", err
+// ListarContas devolve todas as contas pareadas e se há pareamento em curso.
+func (r *repository) ListarContas(ctx context.Context) ([]models.Conta, bool, error) {
+	r.l.RLock()
+	defer r.l.RUnlock()
+
+	contas := []models.Conta{}
+	for _, numero := range r.contasOrdenadas() {
+		sess := r.sessoes[numero]
+		conta := models.Conta{
+			Numero:    numero,
+			Principal: numero == r.principal,
+		}
+		if cli, err := sess.Client(); err == nil {
+			if cli.Store.ID != nil {
+				conta.JID = cli.Store.ID.String()
+			}
+			conta.Nome = cli.Store.PushName
+			conta.Conectado = cli.IsConnected() && cli.Store.ID != nil
+		}
+		contas = append(contas, conta)
 	}
 
-	if err := status.IsOK(); err != nil {
+	pareando := false
+	if r.pareando != nil {
+		if _, err := r.pareando.Client(); err == nil {
+			pareando = true
+		}
+	}
+
+	return contas, pareando, nil
+}
+
+func (r *repository) Send(ctx context.Context, conta, jid1, text string) (string, error) {
+	conn, err := r.clientePronto(ctx, conta)
+	if err != nil {
 		return "", err
 	}
 
@@ -221,11 +259,6 @@ func (r *repository) Send(ctx context.Context, jid1, text string) (string, error
 	defer cancel()
 
 	jid, err := parseJID(jid1)
-	if err != nil {
-		return "", err
-	}
-
-	conn, err := r.conn.Client()
 	if err != nil {
 		return "", err
 	}

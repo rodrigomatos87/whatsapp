@@ -2,192 +2,230 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	whatsappapi "ravi/modules/domain/whatsapp-api"
+	"os"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/appstate"
-	waBinary "go.mau.fi/whatsmeow/binary"
-	meowWaProto "go.mau.fi/whatsmeow/binary/proto"
-	"go.mau.fi/whatsmeow/store"
-	"go.mau.fi/whatsmeow/store/sqlstore"
-	"go.mau.fi/whatsmeow/types"
-	"go.mau.fi/whatsmeow/types/events"
-	waLog "go.mau.fi/whatsmeow/util/log"
-	"google.golang.org/protobuf/proto"
 )
 
-var log waLog.Logger
-
-type client struct {
-	_cli        *whatsmeow.Client
-	_lastReq    time.Time
-	_qrcode     string
-	l           sync.RWMutex
-	_qrCodeLock uint32
+type qrResp struct {
+	qr  string
+	err error
 }
 
-func (c *client) SetClient(cli *whatsmeow.Client) {
-	c.l.Lock()
-	c._cli = cli
-	c.l.Unlock()
-}
+// A conta principal sobrevive a restarts num arquivo ao lado do store
+// (mdtest.db). É só um número de telefone; sem conteúdo sensível.
+const arquivoPrincipal = "conta_principal.txt"
 
-func (c *client) Client() (*whatsmeow.Client, error) {
-	c.l.Lock()
-	defer c.l.Unlock()
-	if c._cli == nil {
-		return nil, fmt.Errorf("whatsApp API não está pronta")
+func (r *repository) carregarPrincipal() {
+	salvo := ""
+	if b, err := os.ReadFile(arquivoPrincipal); err == nil {
+		salvo = strings.TrimSpace(string(b))
 	}
 
-	return c._cli, nil
-}
-
-func (c *client) SetQrCode(s string) {
-	c.l.Lock()
-	c._qrcode = s
-	c.l.Unlock()
-}
-
-func (c *client) getQrCode() string {
-	c.l.Lock()
-	defer c.l.Unlock()
-	return c._qrcode
-}
-
-type repository struct {
-	_logLevel      string
-	_storage       *sqlstore.Container
-	conn           *client
-	qrChan         chan string
-	pairRejectChan chan bool
-	qrChanClose    chan bool
-}
-
-func New(logLevel, dbDialect, dbAddress string, requestFullSync bool) (whatsappapi.Repository, error) {
-	waBinary.IndentXML = true
-	store.DeviceProps.RequireFullSync = proto.Bool(false)
-	store.DeviceProps.PlatformType = meowWaProto.DeviceProps_FIREFOX.Enum()
-	store.SetOSInfo("Ravi Monitor", store.GetWAVersion())
-	log = waLog.Stdout("Handler", logLevel, true)
-
-	if requestFullSync {
-		store.DeviceProps.RequireFullSync = proto.Bool(true)
+	if _, ok := r.sessoes[salvo]; ok {
+		r.principal = salvo
+		return
 	}
-	dbLog := waLog.Stdout("Database", logLevel, true)
-	storeContainer, err := sqlstore.New(context.Background(), dbDialect, dbAddress, dbLog)
+
+	// Sem principal salva (ou ela foi desconectada): a primeira conta
+	// existente assume, preservando o comportamento de conta única.
+	nums := r.contasOrdenadas()
+	if len(nums) > 0 {
+		r.principal = nums[0]
+		r.salvarPrincipal()
+	} else {
+		r.principal = ""
+	}
+}
+
+func (r *repository) salvarPrincipal() {
+	if err := os.WriteFile(arquivoPrincipal, []byte(r.principal), 0644); err != nil {
+		log.Errorf("erro ao salvar a conta principal: %v", err)
+	}
+}
+
+// DefinirPrincipal troca a conta usada pelas rotas legadas (a herança de
+// todos os ambientes do Ravi).
+func (r *repository) DefinirPrincipal(ctx context.Context, conta string) error {
+	r.l.Lock()
+	defer r.l.Unlock()
+	if _, ok := r.sessoes[conta]; !ok {
+		return fmt.Errorf("a conta %s não está conectada neste servidor", conta)
+	}
+	r.principal = conta
+	r.salvarPrincipal()
+	log.Infof("conta principal agora é %s", conta)
+	return nil
+}
+
+// slotPareamento devolve (criando se preciso) o slot de pareamento de uma
+// conta nova, com um device zerado do store.
+func (r *repository) slotPareamento() *client {
+	r.l.Lock()
+	defer r.l.Unlock()
+	if r.pareando == nil {
+		r.pareando = &client{}
+	}
+	return r.pareando
+}
+
+// adotarPareado promove o slot de pareamento a sessão de verdade assim que
+// o WhatsApp conclui o pareamento (Store.ID preenchido).
+func (r *repository) adotarPareado(cli *whatsmeow.Client) {
+	// O evento "success" chega logo antes de o whatsmeow terminar de gravar
+	// o device; espera curta até o ID aparecer.
+	for i := 0; i < 100 && cli.Store.ID == nil; i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if cli.Store.ID == nil {
+		log.Errorf("pareamento sinalizou sucesso mas o device não apareceu no store")
+		return
+	}
+
+	numero := cli.Store.ID.User
+
+	r.l.Lock()
+	defer r.l.Unlock()
+
+	// Re-parear um número que já tem sessão: descarta a sessão antiga.
+	if antiga, ok := r.sessoes[numero]; ok {
+		if velho, err := antiga.Client(); err == nil && velho != cli {
+			velho.Disconnect()
+		}
+	}
+
+	sess := &client{}
+	sess.SetClient(cli)
+	r.sessoes[numero] = sess
+	if r.pareando != nil {
+		if pcli, err := r.pareando.Client(); err == nil && pcli == cli {
+			r.pareando = nil
+		}
+	}
+
+	// Primeira conta pareada vira a principal automaticamente (é o fluxo
+	// clássico de conta única).
+	if r.principal == "" {
+		r.principal = numero
+		r.salvarPrincipal()
+	}
+
+	log.Infof("conta %s pareada e ativa", numero)
+}
+
+func (r *repository) listenQrcode(cli *whatsmeow.Client, slot *client, chRet chan<- qrResp) {
+	ch, err := cli.GetQRChannel(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %v", err)
-	}
-
-	repo := &repository{
-		_logLevel:      logLevel,
-		_storage:       storeContainer,
-		conn:           &client{},
-		qrChan:         make(chan string, 1),
-		pairRejectChan: make(chan bool, 1),
-		qrChanClose:    make(chan bool, 1),
-	}
-
-	conn, err := repo._connToWhatsApp()
-	if err != nil {
-		return nil, err
-	}
-
-	repo.conn.SetClient(conn)
-
-	return repo, conn.Connect()
-}
-
-func (r *repository) handler(rawEvt interface{}) {
-	switch evt := rawEvt.(type) {
-	case *events.AppStateSyncComplete:
-		conn, err := r.conn.Client()
-		if err != nil {
-			log.Warnf("Failed to send available presence: %v", err)
-			return
-		}
-
-		if len(conn.Store.PushName) > 0 && evt.Name == appstate.WAPatchCriticalBlock {
-			err := conn.SendPresence(context.Background(), types.PresenceAvailable)
-			if err != nil {
-				log.Warnf("Failed to send available presence: %v", err)
-			} else {
-				log.Infof("Marked self as available")
-			}
-		}
-	case *events.Connected, *events.PushNameSetting:
-		conn, err := r.conn.Client()
-		if err != nil {
-			log.Warnf("Failed to send available presence: %v", err)
-			return
-		}
-		if len(conn.Store.PushName) == 0 {
-			return
-		}
-		// Send presence available when connecting and when the pushname is changed.
-		// This makes sure that outgoing messages always have the right pushname.
-		err = conn.SendPresence(context.Background(), types.PresenceAvailable)
-		if err != nil {
-			log.Warnf("Failed to send available presence: %v", err)
-		} else {
-			log.Infof("Marked self as available")
-
-		}
-	case *events.StreamReplaced:
-		r.Logout(context.Background())
-	case *events.Message:
-		metaParts := []string{fmt.Sprintf("pushname: %s", evt.Info.PushName), fmt.Sprintf("timestamp: %s", evt.Info.Timestamp)}
-		if evt.Info.Type != "" {
-			metaParts = append(metaParts, fmt.Sprintf("type: %s", evt.Info.Type))
-		}
-		if evt.Info.Category != "" {
-			metaParts = append(metaParts, fmt.Sprintf("category: %s", evt.Info.Category))
-		}
-		if evt.IsViewOnce {
-			metaParts = append(metaParts, "view once")
-		}
-		if evt.IsViewOnce {
-			metaParts = append(metaParts, "ephemeral")
-		}
-		if evt.IsViewOnceV2 {
-			metaParts = append(metaParts, "ephemeral (v2)")
-		}
-		if evt.IsDocumentWithCaption {
-			metaParts = append(metaParts, "document with caption")
-		}
-		if evt.IsEdit {
-			metaParts = append(metaParts, "edit")
-		}
-
-		log.Infof("Received message %s from %s (%s): %+v", evt.Info.ID, evt.Info.SourceString(), strings.Join(metaParts, ", "), evt.Message)
-	case *events.Receipt:
-		if evt.Type == events.ReceiptTypeRead || evt.Type == events.ReceiptTypeReadSelf {
-			log.Infof("%v was read by %s at %s", evt.MessageIDs, evt.SourceString(), evt.Timestamp)
-		} else if evt.Type == events.ReceiptTypeDelivered {
-			log.Infof("%s was delivered to %s at %s", evt.MessageIDs[0], evt.SourceString(), evt.Timestamp)
-		}
-	case *events.Presence:
-		if evt.Unavailable {
-			if evt.LastSeen.IsZero() {
-				log.Infof("%s is now offline", evt.From)
-			} else {
-				log.Infof("%s is now offline (last seen: %s)", evt.From, evt.LastSeen)
+		if errors.Is(err, whatsmeow.ErrQRStoreContainsID) {
+			chRet <- qrResp{
+				qr:  "",
+				err: fmt.Errorf("já está logado"),
 			}
 		} else {
-			log.Infof("%s is now online", evt.From)
+			chRet <- qrResp{
+				qr:  "",
+				err: err,
+			}
 		}
-	case *events.AppState:
-		log.Debugf("App state event: %+v / %+v", evt.Index, evt.SyncActionValue)
-	case *events.KeepAliveTimeout:
-		log.Debugf("Keepalive timeout event: %+v", evt)
-	case *events.KeepAliveRestored:
-		log.Debugf("Keepalive restored")
-	case *events.Blocklist:
-		log.Infof("Blocklist event: %+v", evt)
+	} else {
+		go func() {
+			first := true
+			for evt := range ch {
+				switch evt.Event {
+				case "code":
+					// Mantém o QR exibido sempre no código válido atual e,
+					// principalmente, CONTINUA drenando o canal. Se pararmos
+					// de ler, o whatsmeow desconecta o cliente no próximo
+					// refresh (~20s) e o pareamento nunca conclui.
+					slot.SetQrCode(evt.Code)
+					if first {
+						chRet <- qrResp{qr: evt.Code}
+						first = false
+					}
+				case "success":
+					// Pareado: o whatsmeow grava o device no store; a sessão
+					// é promovida a conta ativa.
+					slot.SetQrCode("")
+					go r.adotarPareado(cli)
+				default:
+					// timeout / err-*: a sessão de QR terminou. Zera o código
+					// para que o próximo getQRCode inicie uma sessão nova.
+					slot.SetQrCode("")
+					if first {
+						chRet <- qrResp{qr: "", err: fmt.Errorf("%s", evt.Event)}
+						first = false
+					}
+				}
+			}
+			// Canal fechado pelo whatsmeow: garante o QR limpo.
+			slot.SetQrCode("")
+		}()
 	}
+}
+
+// RequestNewQRCode inicia (ou continua) o pareamento de uma conta nova.
+// No fluxo legado (conta única), se a principal já está logada devolve o
+// aviso clássico em vez de parear outra conta sem o operador pedir.
+func (r *repository) RequestNewQRCode(ctx context.Context, contaNova bool) (string, error) {
+	if !contaNova {
+		// Existir sessão principal = já há conta pareada (mesmo que
+		// momentaneamente offline, o whatsmeow reconecta sozinho). O fluxo
+		// legado nunca deve parear uma segunda conta por conta própria.
+		if _, err := r.sessao(""); err == nil {
+			return "já está logado", nil
+		}
+	}
+
+	slot := r.slotPareamento()
+
+	if qr := slot.getQrCode(); qr != "" {
+		return qr, nil
+	}
+
+	if !atomic.CompareAndSwapUint32(&slot._qrCodeLock, 0, 1) {
+		log.Errorf(" solicitação de QRCode já está em execução")
+		return slot.getQrCode(), nil
+	}
+
+	defer atomic.StoreUint32(&slot._qrCodeLock, 0)
+
+	// Reverifica sob o lock: outra requisição pode ter populado o QR.
+	if qr := slot.getQrCode(); qr != "" {
+		return qr, nil
+	}
+
+	// Encerra a sessão de pareamento anterior (não pareada) antes de abrir
+	// uma nova. Disconnect (e não Logout) para não apagar credenciais nem
+	// poluir o log com "store doesn't contain a device JID".
+	if velho, err := slot.Client(); err == nil {
+		velho.Disconnect()
+	}
+
+	cli := r.novoCliente(r._storage.NewDevice())
+	slot.SetClient(cli)
+
+	ch := make(chan qrResp, 1)
+	r.listenQrcode(cli, slot, ch)
+
+	if err := cli.Connect(); err != nil {
+		go cli.Disconnect()
+		return "", err
+	}
+
+	resp := <-ch
+	if resp.err != nil {
+		slot.SetQrCode("")
+		return "", resp.err
+	}
+
+	// O QR em cache é mantido atualizado pela goroutine de listenQrcode
+	// enquanto a sessão durar (sem expiração destrutiva a cada 20s).
+	slot.SetQrCode(resp.qr)
+
+	return resp.qr, nil
 }
