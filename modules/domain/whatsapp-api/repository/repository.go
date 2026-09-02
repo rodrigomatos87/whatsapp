@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"ravi/models"
 	"strings"
 	"time"
@@ -270,6 +272,68 @@ func (r *repository) Send(ctx context.Context, conta, jid1, text string) (string
 	}
 
 	return "mensagem enviada com sucesso!", nil
+}
+
+// EnviarImagem sobe uma imagem LOCAL (só da pasta de mídia do copiloto, que
+// tem retenção de um dia) e a envia com legenda. É o caminho pelo qual o
+// copiloto manda gráficos gerados no servidor para o WhatsApp do usuário.
+func (r *repository) EnviarImagem(ctx context.Context, conta, jid1, caminho, legenda string) (string, error) {
+	conn, err := r.clientePronto(ctx, conta)
+	if err != nil {
+		return "", err
+	}
+
+	limpo := filepath.Clean(caminho)
+	if !strings.HasPrefix(limpo, "/opt/Ravi/ia/whats_midia/") {
+		return "", fmt.Errorf("imagem fora da pasta de mídia do copiloto")
+	}
+	dados, err := os.ReadFile(limpo)
+	if err != nil {
+		return "", fmt.Errorf("erro ao ler a imagem: %v", err)
+	}
+	if len(dados) == 0 || len(dados) > 10*1024*1024 {
+		return "", fmt.Errorf("imagem vazia ou maior que 10 MB")
+	}
+
+	mime := "image/png"
+	switch strings.ToLower(filepath.Ext(limpo)) {
+	case ".jpg", ".jpeg":
+		mime = "image/jpeg"
+	case ".webp":
+		mime = "image/webp"
+	case ".gif":
+		mime = "image/gif"
+	}
+
+	jid, err := parseJID(jid1)
+	if err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	up, err := conn.Upload(ctx, dados, whatsmeow.MediaImage)
+	if err != nil {
+		return "", fmt.Errorf("erro no upload da imagem: %v", err)
+	}
+
+	msg := &waProto.Message{ImageMessage: &waProto.ImageMessage{
+		URL:           proto.String(up.URL),
+		DirectPath:    proto.String(up.DirectPath),
+		MediaKey:      up.MediaKey,
+		Mimetype:      proto.String(mime),
+		Caption:       proto.String(legenda),
+		FileEncSHA256: up.FileEncSHA256,
+		FileSHA256:    up.FileSHA256,
+		FileLength:    proto.Uint64(up.FileLength),
+	}}
+
+	if _, err := conn.SendMessage(ctx, jid, msg); err != nil {
+		return "", err
+	}
+
+	return "imagem enviada com sucesso!", nil
 }
 
 func parseJID(arg string) (types.JID, error) {

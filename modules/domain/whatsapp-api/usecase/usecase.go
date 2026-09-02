@@ -83,3 +83,15 @@ func (u *useCase) DefinirPrincipal(ctx context.Context, conta string) error {
 
 	return u.repo.DefinirPrincipal(ctx, conta)
 }
+
+func (u *useCase) EnviarImagem(ctx context.Context, conta, jid, caminho, legenda string) (string, error) {
+	if err := u.validators.String(jid, "jid"); err != nil {
+		return "", err
+	}
+
+	if err := u.validators.String(caminho, "caminho"); err != nil {
+		return "", err
+	}
+
+	return u.repo.EnviarImagem(ctx, conta, jid, caminho, legenda)
+}

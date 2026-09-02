@@ -20,4 +20,5 @@ type UseCase interface {
 	CheckNumber(ctx context.Context, conta, phone string) (models.NumberCheck, error)
 	ListarContas(ctx context.Context) ([]models.Conta, bool, error)
 	DefinirPrincipal(ctx context.Context, conta string) error
+	EnviarImagem(ctx context.Context, conta, jid, caminho, legenda string) (string, error)
 }

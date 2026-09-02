@@ -44,6 +44,8 @@ func New(http httpserver.Server, u whatsappapi.UseCase) {
 	http.Echo().GET("/conta/:num/principal", handler.definirPrincipal)
 	http.Echo().GET("/conta/:num/send", handler.send)
 	http.Echo().POST("/conta/:num/send", handler.sendForm)
+	http.Echo().POST("/send-imagem", handler.enviarImagem)
+	http.Echo().POST("/conta/:num/send-imagem", handler.enviarImagem)
 	http.Echo().GET("/conta/:num/check-number/:phone", handler.checkNumber)
 	http.Echo().GET("/conta/:num/queryInviteLink", handler.groupInfoByLink)
 }
@@ -109,6 +111,22 @@ func (h handler) checkNumber(c echo.Context) error {
 	}
 
 	return h.Response(c, "verificação de número", response)
+}
+
+// enviarImagem manda uma imagem LOCAL (pasta de mídia do copiloto) com legenda —
+// é como os gráficos gerados no servidor chegam ao WhatsApp do usuário.
+func (h handler) enviarImagem(c echo.Context) error {
+	ctx := c.Request().Context()
+	jid := c.Request().FormValue("jid")
+	caminho := c.Request().FormValue("caminho")
+	legenda := c.Request().FormValue("legenda")
+
+	result, err := h.useCase.EnviarImagem(ctx, conta(c), jid, caminho, legenda)
+	if err != nil {
+		return h.InternalErr(c, err)
+	}
+
+	return h.Response(c, result)
 }
 
 func (h handler) sendForm(c echo.Context) error {
